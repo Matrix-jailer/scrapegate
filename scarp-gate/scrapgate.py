@@ -4,6 +4,7 @@ import sys
 import os
 import re
 import time
+import logging
 import telegram
 import random
 import socket
@@ -316,7 +317,7 @@ class PaymentGatewaySpider(scrapy.Spider):
     name = 'payment_gateway_spider'
     custom_settings = {
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-        'SPLASH_URL': 'http://splash-service-yz8h.onrender.com:8050',  # Update after deploying Splash
+        'SPLASH_URL': 'http://splash-service-yz8h.onrender.com',  # Update after deploying Splash
         'DOWNLOADER_MIDDLEWARES': {
             'scrapy_splash.SplashCookiesMiddleware': 723,
             'scrapy_splash.SplashMiddleware': 725,
