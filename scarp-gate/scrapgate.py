@@ -43,7 +43,7 @@ biru = Fore.LIGHTBLUE_EX
 reset = Style.RESET_ALL
 
 # Telegram Bot Configurations
-BOT_TOKEN = "1416628944:AAGXFK5i3dvA7Xticc_oJjP5nUM7-URJ7UQ"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "1416628944:AAFeWmd-vRW-B4rft_zznoNcX26j6gei_Ys")
 FORWARD_CHANNEL_ID = "@mddj77273jdjdjd838383"
 REGISTERED_USERS_FILE = "registered_users.json"
 ADMIN_ACCESS_FILE = "adminaccess.json"
@@ -51,7 +51,7 @@ CREDIT_CODES_FILE = "creditcodes.json"
 BAN_USERS_FILE = "banusers.json"
 BOARD_MESSAGE_FILE = "boardmessage.json"
 
-# Extended Lists (unchanged)
+# Extended Lists
 RELATED_PAGES = [
     "/", "/checkout", "/buynow", "/cart", "/payment", "/order",
     "/purchase", "/subscribe", "/confirm", "/billing", "/pay",
@@ -122,7 +122,7 @@ GATEWAY_KEYWORDS = {
     "paddle": ["checkout.paddle.com", "checkout-service.paddle.com", "paddle.com/checkout", "paddle_button.js", "paddle.js"]
 }
 
-# Time conversion dictionary (unchanged)
+# Time conversion dictionary
 TIME_CONVERSIONS = {
     "minute": 60,
     "hour": 3600,
@@ -131,7 +131,7 @@ TIME_CONVERSIONS = {
     "year": 31536000
 }
 
-# JSON Utilities (unchanged)
+# JSON Utilities
 def load_json(file_path):
     if not os.path.exists(file_path):
         logger.warning(f"File {file_path} does not exist, returning empty dict")
@@ -285,7 +285,7 @@ def load_board_message():
     data = load_json(BOARD_MESSAGE_FILE)
     return data.get("message", "🌟 *No message set!*").strip() if data.get("message") else "🌟 *No message set!*"
 
-# URL Validation (unchanged)
+# URL Validation
 async def validate_url(url):
     domain = tldextract.extract(url).top_domain_under_public_suffix
     if not domain:
@@ -317,7 +317,7 @@ class PaymentGatewaySpider(scrapy.Spider):
     name = 'payment_gateway_spider'
     custom_settings = {
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-        'SPLASH_URL': 'http://splash-service-yz8h.onrender.com',  # Update after deploying Splash
+        'SPLASH_URL': 'https://splash-service-yz8h.onrender.com:8050',
         'DOWNLOADER_MIDDLEWARES': {
             'scrapy_splash.SplashCookiesMiddleware': 723,
             'scrapy_splash.SplashMiddleware': 725,
@@ -330,6 +330,7 @@ class PaymentGatewaySpider(scrapy.Spider):
         'RETRY_TIMES': 3,
         'RETRY_HTTP_CODES': [429, 500, 502, 503, 504],
         'DOWNLOAD_TIMEOUT': 20,
+        'LOG_LEVEL': 'INFO',
     }
 
     def __init__(self, base_url, progress_callback=None, total_pages=None, *args, **kwargs):
@@ -353,56 +354,46 @@ class PaymentGatewaySpider(scrapy.Spider):
             yield SplashRequest(
                 url,
                 self.parse,
-                args={'wait': 2.0},  # Wait for JavaScript rendering
+                args={'wait': 2.0},
                 headers={'Accept-Language': 'en-US,en;q=0.9'},
             )
 
     def parse(self, response):
         self.completed_pages += 1
-        # Update progress bar
         if self.progress_callback:
             self.progress_callback(self.completed_pages, self.total_pages)
 
-        # Check for Cloudflare
         self.results["cloudflare"] = self.results["cloudflare"] or (
             "cloudflare" in response.headers.get("server", "").lower()
         )
 
-        # Parse HTML with BeautifulSoup
         soup = BeautifulSoup(response.text, 'html.parser')
         html_content = response.text.lower()
 
-        # Check for payment gateways
         for gateway in PAYMENT_GATEWAYS:
             if gateway in html_content:
                 self.results["payment_gateways"].add(gateway.capitalize())
                 if any(kw in html_content for kw in GATEWAY_KEYWORDS.get(gateway, []) if kw in THREE_D_SECURE_KEYWORDS):
                     self.results["is_3d_secure"] = True
 
-        # Check for captchas
         if any(re.search(pattern, html_content, re.IGNORECASE) for pattern in CAPTCHA_PATTERNS):
             self.results["captcha"] = True
 
-        # Check for GraphQL
         self.results["graphql"] = self.results["graphql"] or ("graphql" in html_content)
 
-        # Check for platforms
         for keyword, name in PLATFORM_KEYWORDS.items():
             if keyword in html_content:
                 self.results["platforms"].add(name)
 
-        # Check for card support
         for card in CARD_KEYWORDS:
             if card in html_content:
                 self.results["card_support"].add(card.capitalize())
 
-        # Check iframes for 3D Secure
         iframes = soup.find_all('iframe')
         for iframe in iframes:
             frame_url = iframe.get('src', '').lower()
             if any(kw in frame_url for kw in THREE_D_SECURE_KEYWORDS):
                 self.results["is_3d_secure"] = True
-            # Fetch iframe content if possible
             if frame_url:
                 yield SplashRequest(
                     frame_url,
@@ -411,25 +402,48 @@ class PaymentGatewaySpider(scrapy.Spider):
                     meta={'dont_merge_cookies': True},
                 )
 
+    def parse_iframe(self, response):
+        html_content = response.text.lower()
+        for gateway in PAYMENT_GATEWAYS:
+            if gateway in html_content:
+                self.results["payment_gateways"].add(gateway.capitalize())
+                if any(kw in html_content for kw in GATEWAY_KEYWORDS.get(gateway, []) if kw in THREE_D_SECURE_KEYWORDS):
+                    self.results["is_3d_secure"] = True
+        if any(re.search(pattern, html_content, re.IGNORECASE) for pattern in CAPTCHA_PATTERNS):
+            self.results["captcha"] = True
+        self.results["graphql"] = self.results["graphql"] or ("graphql" in html_content)
+        for keyword, name in PLATFORM_KEYWORDS.items():
+            if keyword in html_content:
+                self.results["platforms"].add(name)
+        for card in CARD_KEYWORDS:
+            if card in html_content:
+                self.results["card_support"].add(card.capitalize())
+
+# Scan Site Function
 async def scan_site_parallel(base_url, progress_callback=None):
     results_container = {}
     process = CrawlerProcess({
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-        'SPLASH_URL': 'http://splash-service-yz8h.onrender.com',
+        'SPLASH_URL': 'https://splash-service-yz8h.onrender.com',
+        'LOG_LEVEL': 'INFO',
     })
 
     class WrappedSpider(PaymentGatewaySpider):
         def closed(self, reason):
             results_container["results"] = self.results
+            logger.info(f"Spider closed with reason: {reason}")
 
-    process.crawl(
-        WrappedSpider,
-        base_url=base_url,
-        progress_callback=progress_callback,
-        total_pages=len(RELATED_PAGES)
-    )
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, process.start)
+    try:
+        process.crawl(
+            WrappedSpider,
+            base_url=base_url,
+            progress_callback=progress_callback,
+            total_pages=len(RELATED_PAGES)
+        )
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, process.start)
+    except Exception as e:
+        logger.error(f"Error running spider: {e}")
     return results_container.get("results", {
         "payment_gateways": set(),
         "captcha": False,
@@ -439,28 +453,6 @@ async def scan_site_parallel(base_url, progress_callback=None):
         "card_support": set(),
         "is_3d_secure": False,
     })
-
-results_container = {}
-
-
-results_container = {}
-
-def run_spider():
-    class WrappedSpider(PaymentGatewaySpider):
-        def closed(self, reason):
-            # Capture results before the spider shuts down
-            results_container["results"] = getattr(self, "results", [])
-
-    process.crawl(
-        WrappedSpider,
-        base_url=base_url,
-        progress_callback=progress_callback,
-        total_pages=len(RELATED_PAGES)
-    )
-    process.start()
-    return results_container.get("results", [])
-
-
 
 async def show_progress_bar(update: Update, context: ContextTypes.DEFAULT_TYPE, total_pages):
     message = await update.message.reply_text("**🌐 Checking website... [⬜⬜⬜⬜⬜] 0%**", parse_mode=ParseMode.MARKDOWN)
@@ -488,7 +480,7 @@ async def show_progress_bar(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
     return message, update_progress
 
-# Telegram Bot Handlers (unchanged)
+# Telegram Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_link = f"[@{user.username}](tg://user?id={user.id})" if user.username else f"User_{user.id}"
@@ -714,9 +706,9 @@ async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     disable_notification=True
                 )
             except BadRequest as e:
-                logger.error(f"Channel not found or invalid for {FORWARD_CHANNEL_ID}: {e}")
+                logger.debug(f"Could not forward to channel {FORWARD_CHANNEL_ID}: {e}")
             except Exception as e:
-                logger.error(f"Error forwarding to channel: {e}")
+                logger.debug(f"Error forwarding to channel: {e}")
             break
         except Exception as e:
             logger.error(f"Error checking URL {url}: {e}")
@@ -747,7 +739,7 @@ async def redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_user_banned(user_id):
         await update.message.reply_text(
             "**🚫 You are banned!**\n"
-            "📩 **Try to contact Owner to get Unban: @Gen666Z**\n\n",
+            "📩 *Try to contact Owner to get Unban: @Gen666Z*\n\n",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
         )
