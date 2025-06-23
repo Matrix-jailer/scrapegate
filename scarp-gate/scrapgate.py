@@ -415,7 +415,7 @@ async def scan_site_parallel(base_url, progress_callback=None):
     results_container = {}
     process = CrawlerProcess({
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-        'SPLASH_URL': 'http://splash-service-yz8h.onrender.com:8050',
+        'SPLASH_URL': 'http://splash-service-yz8h.onrender.com',
     })
 
     class WrappedSpider(PaymentGatewaySpider):
