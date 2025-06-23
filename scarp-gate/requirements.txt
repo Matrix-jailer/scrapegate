@@ -1,0 +1,9 @@
+scrapy==2.6.2
+scrapy-splash==0.8.0
+python-telegram-bot==20.7
+aiohttp
+tldextract
+beautifulsoup4
+tqdm
+colorama
+requests
