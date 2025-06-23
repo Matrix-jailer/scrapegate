@@ -43,7 +43,7 @@ biru = Fore.LIGHTBLUE_EX
 reset = Style.RESET_ALL
 
 # Telegram Bot Configurations
-BOT_TOKEN = "1416628944:AAHJmY18FS8unF4HwMJiJkdYxcDoT2Hj4Fs"
+BOT_TOKEN = "1416628944:AAGXFK5i3dvA7Xticc_oJjP5nUM7-URJ7UQ"
 FORWARD_CHANNEL_ID = "@mddj77273jdjdjd838383"
 REGISTERED_USERS_FILE = "registered_users.json"
 ADMIN_ACCESS_FILE = "adminaccess.json"
