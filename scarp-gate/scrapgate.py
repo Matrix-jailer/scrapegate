@@ -43,7 +43,7 @@ biru = Fore.LIGHTBLUE_EX
 reset = Style.RESET_ALL
 
 # Telegram Bot Configurations
-BOT_TOKEN = os.getenv("BOT_TOKEN", "1416628944:AAFeWmd-vRW-B4rft_zznoNcX26j6gei_Ys")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "1416628944:AAFuG0T9MvVCBOXxDsQO3vTOfO6yLtUoBSA")
 FORWARD_CHANNEL_ID = "@mddj77273jdjdjd838383"
 REGISTERED_USERS_FILE = "registered_users.json"
 ADMIN_ACCESS_FILE = "adminaccess.json"
@@ -134,7 +134,12 @@ TIME_CONVERSIONS = {
 # JSON Utilities
 def load_json(file_path):
     if not os.path.exists(file_path):
-        logger.warning(f"File {file_path} does not exist, returning empty dict")
+        logger.warning(f"File {file_path} does not exist, creating empty file")
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+        except Exception as e:
+            logger.error(f"Error creating {file_path}: {e}")
         return {}
     try:
         with open(file_path, "r", encoding="utf-8") as f:
@@ -155,8 +160,11 @@ def load_json(file_path):
         return {}
 
 def save_json(file_path, data):
-    with open(file_path, "w") as f:
-        json.dump(data, f)
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving {file_path}: {e}")
 
 def load_registered_users():
     return load_json(REGISTERED_USERS_FILE)
@@ -262,10 +270,11 @@ def ban_user(user_id, reason, time_period):
         expires = "permanent"
     else:
         try:
-            time_value, time_unit = int(time_period[:-len(time_period.partition(time_period[-1])[0]) - 1]), time_period[-1]
-            expires = time.time() + (time_value * TIME_CONVERSIONS.get(time_unit, 0))
+            time_value = int(time_period.rstrip("minutedayhoryear"))
+            time_unit = time_period[len(str(time_value)):]
+            expires = time.time() + (time_value * TIME_CONVERSIONS.get(time_unit, 86400))
         except (ValueError, IndexError):
-            expires = time.time() + 86400  # Default to 1 day if invalid format
+            expires = time.time() + 86400  # Default to 1 day
     ban_users[str(user_id)] = {
         "id": str(user_id),
         "date": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -287,7 +296,7 @@ def load_board_message():
 
 # URL Validation
 async def validate_url(url):
-    domain = tldextract.extract(url).top_domain_under_public_suffix
+    domain = tldextract.extract(url).registered_domain
     if not domain:
         return False, "Invalid URL: No valid domain found."
 
@@ -329,8 +338,9 @@ class PaymentGatewaySpider(scrapy.Spider):
         'DUPEFILTER_CLASS': 'scrapy_splash.SplashAwareDupeFilter',
         'RETRY_TIMES': 3,
         'RETRY_HTTP_CODES': [429, 500, 502, 503, 504],
-        'DOWNLOAD_TIMEOUT': 20,
+        'DOWNLOAD_TIMEOUT': 30,
         'LOG_LEVEL': 'INFO',
+        'HTTPCACHE_ENABLED': False,
     }
 
     def __init__(self, base_url, progress_callback=None, total_pages=None, *args, **kwargs):
@@ -363,17 +373,17 @@ class PaymentGatewaySpider(scrapy.Spider):
         if self.progress_callback:
             self.progress_callback(self.completed_pages, self.total_pages)
 
-        self.results["cloudflare"] = self.results["cloudflare"] or (
+        self.results["cloudflare"] = " = self.results["cloudflare"] or (
             "cloudflare" in response.headers.get("server", "").lower()
         )
 
         soup = BeautifulSoup(response.text, 'html.parser')
-        html_content = response.text.lower()
+        html_content = soup.body.get_text(separator=' ').lower() if soup.body else response.text.lower()
 
         for gateway in PAYMENT_GATEWAYS:
             if gateway in html_content:
-                self.results["payment_gateways"].add(gateway.capitalize())
-                if any(kw in html_content for kw in GATEWAY_KEYWORDS.get(gateway, []) if kw in THREE_D_SECURE_KEYWORDS):
+                self.results["payment_gateways"].add(gateway.capitalize().title())
+                if any(kw in html_content for kw in GATEWAY_KEYWORDS.get(gateway.lower(), []) if kw in THREE_D_SECURE_KEYWORDS):
                     self.results["is_3d_secure"] = True
 
         if any(re.search(pattern, html_content, re.IGNORECASE) for pattern in CAPTCHA_PATTERNS):
@@ -387,14 +397,14 @@ class PaymentGatewaySpider(scrapy.Spider):
 
         for card in CARD_KEYWORDS:
             if card in html_content:
-                self.results["card_support"].add(card.capitalize())
+                self.results["card_support"].add(card.capitalize().title())
 
         iframes = soup.find_all('iframe')
         for iframe in iframes:
             frame_url = iframe.get('src', '').lower()
-            if any(kw in frame_url for kw in THREE_D_SECURE_KEYWORDS):
+            if frame_url and any(kw in frame_url for kw in THREE_D_SECURE_KEYWORDS):
                 self.results["is_3d_secure"] = True
-            if frame_url:
+            if frame_url.startswith(('http://', 'https://')):
                 yield SplashRequest(
                     frame_url,
                     self.parse_iframe,
@@ -406,8 +416,8 @@ class PaymentGatewaySpider(scrapy.Spider):
         html_content = response.text.lower()
         for gateway in PAYMENT_GATEWAYS:
             if gateway in html_content:
-                self.results["payment_gateways"].add(gateway.capitalize())
-                if any(kw in html_content for kw in GATEWAY_KEYWORDS.get(gateway, []) if kw in THREE_D_SECURE_KEYWORDS):
+                self.results["payment_gateways"].add(gateway.capitalize().title())
+                if any(kw in html_content for kw in GATEWAY_KEYWORDS.get(gateway.lower(), []) if kw in THREE_D_SECURE_KEYWORDS):
                     self.results["is_3d_secure"] = True
         if any(re.search(pattern, html_content, re.IGNORECASE) for pattern in CAPTCHA_PATTERNS):
             self.results["captcha"] = True
@@ -417,7 +427,7 @@ class PaymentGatewaySpider(scrapy.Spider):
                 self.results["platforms"].add(name)
         for card in CARD_KEYWORDS:
             if card in html_content:
-                self.results["card_support"].add(card.capitalize())
+                self.results["card_support"].add(card.capitalize().title())
 
 # Scan Site Function
 async def scan_site_parallel(base_url, progress_callback=None):
@@ -426,6 +436,8 @@ async def scan_site_parallel(base_url, progress_callback=None):
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
         'SPLASH_URL': 'https://splash-service-yz8h.onrender.com',
         'LOG_LEVEL': 'INFO',
+        'DOWNLOAD_TIMEOUT': 20,
+        'HTTPCACHE_ENABLED': False,
     })
 
     class WrappedSpider(PaymentGatewaySpider):
@@ -505,7 +517,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         context.user_data["message_id"] = message.message_id
     else:
-        await update.callback_query.edit_message_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        await query.edit_message_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -629,7 +641,7 @@ async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_user_banned(user_id):
         await update.message.reply_text(
             "**🚫 You are banned!**\n"
-            "📩 **Try to contact Owner to get Unban: @Gen666Z**\n\n",
+            "📩 *Try to contact Owner to get Unban: @Gen666Z**\n\n",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
         )
