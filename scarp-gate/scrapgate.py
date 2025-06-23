@@ -429,16 +429,23 @@ async def scan_site_parallel(base_url, progress_callback=None):
         "is_3d_secure": False,
     }
 
-    def run_spider():
-        process = CrawlerProcess()
-        spider = PaymentGatewaySpider(base_url=base_url, progress_callback=progress_callback, total_pages=len(RELATED_PAGES))
-        process.crawl(spider)
-        process.start()
-        return spider.results
+results_container = {}
 
-    # Run Scrapy in a separate thread to avoid blocking asyncio
-    results = await loop.run_in_executor(None, run_spider)
-    return results
+def run_spider():
+    class WrappedSpider(PaymentGatewaySpider):
+        def closed(self, reason):
+            # Capture results before the spider shuts down
+            results_container["results"] = getattr(self, "results", [])
+
+    process.crawl(
+        WrappedSpider,
+        base_url=base_url,
+        progress_callback=progress_callback,
+        total_pages=len(RELATED_PAGES)
+    )
+    process.start()
+    return results_container.get("results", [])
+
 
 async def show_progress_bar(update: Update, context: ContextTypes.DEFAULT_TYPE, total_pages):
     message = await update.message.reply_text("**🌐 Checking website... [⬜⬜⬜⬜⬜] 0%**", parse_mode=ParseMode.MARKDOWN)
