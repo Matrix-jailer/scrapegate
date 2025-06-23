@@ -42,7 +42,7 @@ biru = Fore.LIGHTBLUE_EX
 reset = Style.RESET_ALL
 
 # Telegram Bot Configurations
-BOT_TOKEN = "7129468676:AAFjCrjdUaqoXO3VUlCgCRJShlTcz7fzBlA"
+BOT_TOKEN = "1416628944:AAG0u97_KJVNnTXlAdGOrmU6z9LYB3jBMWg"
 FORWARD_CHANNEL_ID = "@mddj77273jdjdjd838383"
 REGISTERED_USERS_FILE = "registered_users.json"
 ADMIN_ACCESS_FILE = "adminaccess.json"
@@ -316,7 +316,7 @@ class PaymentGatewaySpider(scrapy.Spider):
     name = 'payment_gateway_spider'
     custom_settings = {
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-        'SPLASH_URL': 'http://splash-service.onrender.com:8050',  # Update after deploying Splash
+        'SPLASH_URL': 'http://matrix-jailer-splash.onrender.com:8050',  # Update after deploying Splash
         'DOWNLOADER_MIDDLEWARES': {
             'scrapy_splash.SplashCookiesMiddleware': 723,
             'scrapy_splash.SplashMiddleware': 725,
