@@ -411,24 +411,25 @@ class PaymentGatewaySpider(scrapy.Spider):
                     meta={'dont_merge_cookies': True},
                 )
 
-# Web Scanning Function
 async def scan_site_parallel(base_url, progress_callback=None):
-    loop = asyncio.get_event_loop()
     results_container = {}
+    process = CrawlerProcess({
+        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+        'SPLASH_URL': 'http://splash-service-yz8h.onrender.com:8050',
+    })
 
     class WrappedSpider(PaymentGatewaySpider):
         def closed(self, reason):
             results_container["results"] = self.results
 
-    process = CrawlerProcess()
     process.crawl(
         WrappedSpider,
         base_url=base_url,
         progress_callback=progress_callback,
         total_pages=len(RELATED_PAGES)
     )
+    loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, process.start)
-
     return results_container.get("results", {
         "payment_gateways": set(),
         "captcha": False,
