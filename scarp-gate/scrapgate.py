@@ -411,15 +411,25 @@ class PaymentGatewaySpider(scrapy.Spider):
                     meta={'dont_merge_cookies': True},
                 )
 
-    def parse_iframe(self, response):
-        html_content = response.text.lower()
-        if any(kw in html_content for kw in THREE_D_SECURE_KEYWORDS):
-            self.results["is_3d_secure"] = True
-
 # Web Scanning Function
 async def scan_site_parallel(base_url, progress_callback=None):
     loop = asyncio.get_event_loop()
-    results = {
+    results_container = {}
+
+    class WrappedSpider(PaymentGatewaySpider):
+        def closed(self, reason):
+            results_container["results"] = self.results
+
+    process = CrawlerProcess()
+    process.crawl(
+        WrappedSpider,
+        base_url=base_url,
+        progress_callback=progress_callback,
+        total_pages=len(RELATED_PAGES)
+    )
+    await loop.run_in_executor(None, process.start)
+
+    return results_container.get("results", {
         "payment_gateways": set(),
         "captcha": False,
         "cloudflare": False,
@@ -427,7 +437,7 @@ async def scan_site_parallel(base_url, progress_callback=None):
         "platforms": set(),
         "card_support": set(),
         "is_3d_secure": False,
-    }
+    })
 
 results_container = {}
 
