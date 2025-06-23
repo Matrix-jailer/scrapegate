@@ -43,7 +43,7 @@ biru = Fore.LIGHTBLUE_EX
 reset = Style.RESET_ALL
 
 # Telegram Bot Configurations
-BOT_TOKEN = os.getenv("BOT_TOKEN", "1416628944:AAFuG0T9MvVCBOXxDsQO3vTOfO6yLtUoBSA")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "1416628944:AAFHdCR42XMB8XAy0_IZojglR1A8MLEOK1E")
 FORWARD_CHANNEL_ID = "@mddj77273jdjdjd838383"
 REGISTERED_USERS_FILE = "registered_users.json"
 ADMIN_ACCESS_FILE = "adminaccess.json"
@@ -373,9 +373,7 @@ class PaymentGatewaySpider(scrapy.Spider):
         if self.progress_callback:
             self.progress_callback(self.completed_pages, self.total_pages)
 
-        self.results["cloudflare"] = " = self.results["cloudflare"] or (
-            "cloudflare" in response.headers.get("server", "").lower()
-        )
+        self.results["cloudflare"] = self.results["cloudflare"] or ("cloudflare" in response.headers.get("server", "").lower())
 
         soup = BeautifulSoup(response.text, 'html.parser')
         html_content = soup.body.get_text(separator=' ').lower() if soup.body else response.text.lower()
