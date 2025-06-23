@@ -22,14 +22,22 @@ from telegram.error import BadRequest, NetworkError, TimedOut
 from tqdm import tqdm
 from colorama import Fore, Style
 import scrapy
-from scrapy.crawler import CrawlerProcess
+from scrapy.crawler import CrawlerRunner
 from scrapy_splash import SplashRequest
+from scrapy.utils.project import get_project_settings
+from twisted.internet import asyncioreactor
+
+# Install asyncio reactor for Twisted
+try:
+    asyncioreactor.install()
+except Exception as e:
+    print(f"Failed to install asyncio reactor: {e}")
 
 # Configure logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Remove Playwright lock file as it's no longer needed
+# Remove Playwright lock file if exists
 LOCK_FILE = ".playwright_installed.lock"
 if os.path.exists(LOCK_FILE):
     os.remove(LOCK_FILE)
@@ -43,7 +51,7 @@ biru = Fore.LIGHTBLUE_EX
 reset = Style.RESET_ALL
 
 # Telegram Bot Configurations
-BOT_TOKEN = os.getenv("BOT_TOKEN", "1416628944:AAFHdCR42XMB8XAy0_IZojglR1A8MLEOK1E")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "992401756:AAF-35_KKUy4hrk7WGJhZk3kJ2yZZ2oZsx0")
 FORWARD_CHANNEL_ID = "@mddj77273jdjdjd838383"
 REGISTERED_USERS_FILE = "registered_users.json"
 ADMIN_ACCESS_FILE = "adminaccess.json"
@@ -326,7 +334,7 @@ class PaymentGatewaySpider(scrapy.Spider):
     name = 'payment_gateway_spider'
     custom_settings = {
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-        'SPLASH_URL': 'https://splash-service-yz8h.onrender.com:8050',
+        'SPLASH_URL': 'https://splash-service-yz8h.onrender.com',
         'DOWNLOADER_MIDDLEWARES': {
             'scrapy_splash.SplashCookiesMiddleware': 723,
             'scrapy_splash.SplashMiddleware': 725,
@@ -338,9 +346,10 @@ class PaymentGatewaySpider(scrapy.Spider):
         'DUPEFILTER_CLASS': 'scrapy_splash.SplashAwareDupeFilter',
         'RETRY_TIMES': 3,
         'RETRY_HTTP_CODES': [429, 500, 502, 503, 504],
-        'DOWNLOAD_TIMEOUT': 30,
+        'DOWNLOAD_TIMEOUT': 60,  # Increased timeout
         'LOG_LEVEL': 'INFO',
         'HTTPCACHE_ENABLED': False,
+        'SPLASH_ENABLED': True,  # Toggle for fallback
     }
 
     def __init__(self, base_url, progress_callback=None, total_pages=None, *args, **kwargs):
@@ -360,13 +369,21 @@ class PaymentGatewaySpider(scrapy.Spider):
         self.completed_pages = 0
 
     def start_requests(self):
+        splash_enabled = self.settings.getbool('SPLASH_ENABLED')
         for url in self.start_urls:
-            yield SplashRequest(
-                url,
-                self.parse,
-                args={'wait': 2.0},
-                headers={'Accept-Language': 'en-US,en;q=0.9'},
-            )
+            if splash_enabled:
+                yield SplashRequest(
+                    url,
+                    self.parse,
+                    args={'wait': 2.0},
+                    headers={'Accept-Language': 'en-US,en;q=0.9'},
+                )
+            else:
+                yield scrapy.Request(
+                    url,
+                    self.parse,
+                    headers={'Accept-Language': 'en-US,en;q=0.9'},
+                )
 
     def parse(self, response):
         self.completed_pages += 1
@@ -403,12 +420,19 @@ class PaymentGatewaySpider(scrapy.Spider):
             if frame_url and any(kw in frame_url for kw in THREE_D_SECURE_KEYWORDS):
                 self.results["is_3d_secure"] = True
             if frame_url.startswith(('http://', 'https://')):
-                yield SplashRequest(
-                    frame_url,
-                    self.parse_iframe,
-                    args={'wait': 2.0},
-                    meta={'dont_merge_cookies': True},
-                )
+                if self.settings.getbool('SPLASH_ENABLED'):
+                    yield SplashRequest(
+                        frame_url,
+                        self.parse_iframe,
+                        args={'wait': 2.0},
+                        meta={'dont_merge_cookies': True},
+                    )
+                else:
+                    yield scrapy.Request(
+                        frame_url,
+                        self.parse_iframe,
+                        meta={'dont_merge_cookies': True},
+                    )
 
     def parse_iframe(self, response):
         html_content = response.text.lower()
@@ -427,31 +451,47 @@ class PaymentGatewaySpider(scrapy.Spider):
             if card in html_content:
                 self.results["card_support"].add(card.capitalize().title())
 
+# Patch scrapy-splash dupefilter to fix deprecation warning
+from scrapy_splash.dupefilter import SplashAwareDupeFilter
+from scrapy.utils.request import fingerprint
+
+class PatchedSplashAwareDupeFilter(SplashAwareDupeFilter):
+    def request_fingerprint(self, request, include_headers=None):
+        return fingerprint(request, include_headers=include_headers)
+
 # Scan Site Function
 async def scan_site_parallel(base_url, progress_callback=None):
+    settings = get_project_settings()
+    settings.set('DUPEFILTER_CLASS', PatchedSplashAwareDupeFilter, priority='spider')
+    settings.set('SPLASH_ENABLED', True, priority='spider')
+    
+    runner = CrawlerRunner(settings)
     results_container = {}
-    process = CrawlerProcess({
-        'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
-        'SPLASH_URL': 'https://splash-service-yz8h.onrender.com',
-        'LOG_LEVEL': 'INFO',
-        'DOWNLOAD_TIMEOUT': 20,
-        'HTTPCACHE_ENABLED': False,
-    })
-
+    
     class WrappedSpider(PaymentGatewaySpider):
         def closed(self, reason):
             results_container["results"] = self.results
             logger.info(f"Spider closed with reason: {reason}")
 
     try:
-        process.crawl(
+        # Test Splash connectivity
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get('https://splash-service-yz8h.onrender.com:8050', timeout=10) as resp:
+                    if resp.status != 200:
+                        logger.warning("Splash service unavailable, falling back to non-Splash crawling")
+                        settings.set('SPLASH_ENABLED', False, priority='spider')
+            except aiohttp.ClientError:
+                logger.warning("Splash service unavailable, falling back to non-Splash crawling")
+                settings.set('SPLASH_ENABLED', False, priority='spider')
+
+        d = runner.crawl(
             WrappedSpider,
             base_url=base_url,
             progress_callback=progress_callback,
             total_pages=len(RELATED_PAGES)
         )
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, process.start)
+        await d  # Await the Deferred object
     except Exception as e:
         logger.error(f"Error running spider: {e}")
     return results_container.get("results", {
@@ -495,10 +535,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_link = f"[@{user.username}](tg://user?id={user.id})" if user.username else f"User_{user.id}"
     keyboard = [
-        [{"text": "📝 Register", "callback_data": "register"}, {"text": "🔍 Check URL", "callback_data": "checkurl"}],
-        [{"text": "💰 Credits", "callback_data": "credits"}, {"text": "👨‍💼 Admin", "callback_data": "admin"}]
+        [InlineKeyboardButton("📝 Register", callback_data="register"), InlineKeyboardButton("🔍 Check URL", callback_data="checkurl")],
+        [InlineKeyboardButton("💰 Credits", callback_data="credits"), InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")]
     ]
-    reply_markup = create_inline_keyboard(keyboard)
+    reply_markup = InlineKeyboardMarkup(keyboard)
     is_registered = is_user_registered(user.id)
     features = (
         "  - ✅ *Registered Successfully*\n"
@@ -515,110 +555,110 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
         context.user_data["message_id"] = message.message_id
     else:
-        await query.edit_message_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
+        await update.callback_query.edit_message_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=reply_markup)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     keyboard = [
-        [{"text": "📝 Register", "callback_data": "register"}, {"text": "🔍 Check URL", "callback_data": "checkurl"}],
-        [{"text": "💰 Credits", "callback_data": "credits"}, {"text": "👨‍💼 Admin", "callback_data": "admin"}],
-        [{"text": "🔙 Back", "callback_data": "back"}]
+        [InlineKeyboardButton("📝 Register", callback_data="register"), InlineKeyboardButton("🔍 Check URL", callback_data="checkurl")],
+        [InlineKeyboardButton("💰 Credits", callback_data="credits"), InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")],
+        [InlineKeyboardButton("🔙 Back", callback_data="back")]
     ]
-    reply_markup = create_inline_keyboard(keyboard)
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    if action := query.data:
-        if action == "register":
-            if is_user_banned(user_id):
-                await query.edit_message_text(
-                    "**🚫 You are banned!**\n"
-                    "📩 *Try to contact Owner to get Unban: @Gen666Z*\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
-                )
-            elif is_user_registered(user_id):
-                await query.edit_message_text(
-                    "**🚫 You are already registered!**\n"
-                    f"💰 **Credits: {get_user_credits(user_id)}**\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
-                )
-            else:
-                register_user(user_id, update)
-                await query.edit_message_text(
-                    "**✅ Registration Successful!**\n"
-                    f"💰 **You received 10 credits! Current: 10**\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
-                )
-        elif action == "checkurl":
-            credits = get_user_credits(user_id)
-            if is_user_banned(user_id):
-                await query.edit_message_text(
-                    "**🚫 You are banned!**\n"
-                    "📩 *Try to contact Owner to get Unban: @Gen666Z*\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
-                )
-            elif not is_user_registered(user_id):
-                await query.edit_message_text(
-                    "**🚫 Please register first!**\n"
-                    "📝 **Click 'Register' to get started.**\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
-                )
-            elif credits <= 0:
-                await query.edit_message_text(
-                    "**💸 Out of Credits!**\n"
-                    "🔴 **Your credits have run out!**\n"
-                    "📩 **Contact Admin to recharge: @Gen666Z**\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
-                )
-            else:
-                await query.edit_message_text(
-                    "**🔍 Enter URL to Check**\n"
-                    f"💰 **Credits: {credits} (1 credit will be deducted)**\n"
-                    "📝 **Send /url <url> (e.g., /url https://example.com)**\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
-                )
-                context.user_data["awaiting_url"] = True
-        elif action == "credits":
-            credits = get_user_credits(user_id)
-            if is_user_banned(user_id):
-                await query.edit_message_text(
-                    "**🚫 You are banned!**\n"
-                    "📩 *Try to contact Owner to get Unban: @Gen666Z*\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
-                )
-            elif not is_user_registered(user_id):
-                await query.edit_message_text(
-                    "**🚫 Please register first!**\n"
-                    "📝 **Click 'Register' to get started.**\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
-                )
-            else:
-                await query.edit_message_text(
-                    f"**💰 Your Credits**\n"
-                    f"🔢 **Available: {credits} credits**\n"
-                    f"🔄 **1 credit per URL check**\n"
-                    f"🔧 **Contact admin to recharge if needed!**\n\n",
-                    parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=reply_markup
-                )
-        elif action == "admin":
+    action = query.data
+    if action == "register":
+        if is_user_banned(user_id):
             await query.edit_message_text(
-                "**👨‍💼 Contact Admin**\n"
-                "📩 **Reach out to @Gen666Z for support or recharges!**\n\n",
+                "**🚫 You are banned!**\n"
+                "📩 *Try to contact Owner to get Unban: @Gen666Z*\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")]])
+            )
+        elif is_user_registered(user_id):
+            await query.edit_message_text(
+                "**🚫 You are already registered!**\n"
+                f"💰 **Credits: {get_user_credits(user_id)}**\n\n",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=reply_markup
             )
-        elif action == "back":
-            await start(update, context)
+        else:
+            register_user(user_id, update)
+            await query.edit_message_text(
+                "**✅ Registration Successful!**\n"
+                f"💰 **You received 10 credits! Current: 10**\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+    elif action == "checkurl":
+        credits = get_user_credits(user_id)
+        if is_user_banned(user_id):
+            await query.edit_message_text(
+                "**🚫 You are banned!**\n"
+                "📩 *Try to contact Owner to get Unban: @Gen666Z*\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")]])
+            )
+        elif not is_user_registered(user_id):
+            await query.edit_message_text(
+                "**🚫 Please register first!**\n"
+                "📝 **Click 'Register' to get started.**\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+        elif credits <= 0:
+            await query.edit_message_text(
+                "**💸 Out of Credits!**\n"
+                "🔴 **Your credits have run out!**\n"
+                "📩 **Contact Admin to recharge: @Gen666Z**\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+        else:
+            await query.edit_message_text(
+                "**🔍 Enter URL to Check**\n"
+                f"💰 **Credits: {credits} (1 credit will be deducted)**\n"
+                "📝 **Send /url <url> (e.g., /url https://example.com)**\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+            context.user_data["awaiting_url"] = True
+    elif action == "credits":
+        credits = get_user_credits(user_id)
+        if is_user_banned(user_id):
+            await query.edit_message_text(
+                "**🚫 You are banned!**\n"
+                "📩 *Try to contact Owner to get Unban: @Gen666Z*\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")]])
+            )
+        elif not is_user_registered(user_id):
+            await query.edit_message_text(
+                "**🚫 Please register first!**\n"
+                "📝 **Click 'Register' to get started.**\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+        else:
+            await query.edit_message_text(
+                f"**💰 Your Credits**\n"
+                f"🔢 **Available: {credits} credits**\n"
+                f"🔄 **1 credit per URL check**\n"
+                f"🔧 **Contact admin to recharge if needed!**\n\n",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
+    elif action == "admin":
+        await query.edit_message_text(
+            "**👨‍💼 Contact Admin**\n"
+            "📩 **Reach out to @Gen666Z for support or recharges!**\n\n",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=reply_markup
+        )
+    elif action == "back":
+        await start(update, context)
 
 async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -641,7 +681,7 @@ async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "**🚫 You are banned!**\n"
             "📩 *Try to contact Owner to get Unban: @Gen666Z**\n\n",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")]])
         )
         return
     if not is_user_registered(user_id):
@@ -665,7 +705,7 @@ async def url_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"**❌ Invalid URL!**\n{message}\n\n",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=create_inline_keyboard([[{"text": "🔙 Back", "callback_data": "back"}]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
         return
 
@@ -751,13 +791,13 @@ async def redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "**🚫 You are banned!**\n"
             "📩 *Try to contact Owner to get Unban: @Gen666Z*\n\n",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")]])
         )
         return
 
     raw_text = update.message.text.strip()
     just_args = raw_text[len("/redeem"):].strip()
-    reply_markup = create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")]])
 
     if not just_args:
         await update.message.reply_text(
@@ -928,12 +968,8 @@ async def fallback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "**🚫 You are banned!**\n"
             "📩 **Try to contact Owner to get Unban: @Gen666Z**\n\n",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=create_inline_keyboard([[{"text": "👨‍💼 Admin", "callback_data": "admin"}]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Admin", callback_data="admin")]])
         )
-
-def create_inline_keyboard(buttons):
-    keyboard = [[InlineKeyboardButton(btn["text"], callback_data=btn["callback_data"]) for btn in row if isinstance(btn, dict)] for row in buttons if any(isinstance(btn, dict) for btn in row)]
-    return InlineKeyboardMarkup(keyboard)
 
 # Main
 if __name__ == "__main__":
