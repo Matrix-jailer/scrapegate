@@ -8,5 +8,6 @@ tqdm
 colorama
 pyOpenSSL==24.1.0
 cryptography==42.0.8
+lxml==5.4.0
 requests
 six
