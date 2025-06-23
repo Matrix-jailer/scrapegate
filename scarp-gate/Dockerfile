@@ -1,7 +1,7 @@
 # Use Python 3.11 slim for compatibility
 FROM python:3.11-slim
 
-# Install system dependencies for Scrapy, pyOpenSSL, and cryptography
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     libffi-dev \
